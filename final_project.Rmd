@@ -2,7 +2,7 @@
 ### Date: 07/23/2024
 
 ```{r}
-realtor_data <- read.csv("realtor-data.csv")
+realtor_data <- read.csv("../realtor-data.csv")
 library(tidyverse)
 library(dplyr)
 library(multcomp)
