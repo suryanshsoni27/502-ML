@@ -166,28 +166,6 @@ ggplot(data_sample, aes(x = acre_lot, y = price)) +
 
 
 
-```{r}
-
-# Load necessary libraries
-library(plotly)
-
-sample_indices <- sample(1:nrow(data_clean), 1000)
-data_sample <- data_clean[sample_indices, ]
-
-# Interactive scatter plot
-plot_ly(data = data_sample, 
-        x = ~acre_lot, 
-        y = ~price, 
-        type = 'scatter', 
-        mode = 'markers', 
-        text = ~paste('Zip Code:', zip_code), 
-        marker = list(size = 5, color = 'rgba(152, 0, 0, .8)', opacity = 0.6)) %>%
-  layout(title = 'Interactive Scatter Plot of Price vs Acre Lot',
-         xaxis = list(title = 'Acre Lot'),
-         yaxis = list(title = 'Price'))
-
-
-```
 
 
 ```{r}
@@ -460,8 +438,7 @@ data$date <- as.numeric(as.Date(data$date, format = "%Y-%m-%d"))
 # Calculate the number of days since the previous sale
 data$days_since_prev_sold <- data$date - data$prev_sold_date
 
-# Remove original date columns
-data <- data %>% select(-prev_sold_date, -date)
+
 
 # Convert categorical variables to numeric
 data$zip_code <- as.numeric(as.factor(data$zip_code))
