@@ -1,0 +1,190 @@
+---
+title: "EDA_Medha"
+author: "Medha Deeptimahanti"
+date: "2024-08-04"
+output: html_document
+---
+
+### Desription: EDA & Inference
+### Date: 07/23/2024
+
+```{r}
+realtor_data <- read.csv("C:/Users/Medha_Deeptimahanti/Downloads/archive/realtor-data.zip.csv")
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(multcomp)
+
+sold<-realtor_data %>% subset(status=='sold')
+
+str(sold)
+summary(sold)
+```
+
+################## Data Wrangling ##################
+```{r}
+### Step 1: clean NA's
+na_counts <- sapply(sold, function(x) sum(is.na(x)))
+print(na_counts)
+#only keep records with all variables not missing
+sold1<-sold[complete.cases(sold),]
+
+### Step 2: Date: only keep month of date
+sold1$date <- substr(sold1$prev_sold_date, 6, 7)
+sold1<-sold1[,-1]
+```
+
+
+#the median price per square feet of house in USA in 2023 is $224. 
+#the median sales price of house in USA in 2023 in around $426525 (423200, 435400, 418500, 429000)
+#https://fred.stlouisfed.org/series/MSPUS
+
+#lower_price<-10000
+#upper_price<-2000000
+```{r}
+q1_price <- quantile(sold1$price, 0.25)
+q3_price <- quantile(sold1$price, 0.75)
+iqr_price <- IQR(sold1$price)
+lower_price<-max(q1_price-0.5*iqr_price,0)
+upper_price<-q3_price+0.5*iqr_price
+
+lower_bed<-1
+upper_bed<-10
+lower_bath<-1
+upper_bath<-10
+acre_lot_max<-10
+house_size_max<-10000
+data<-sold1 %>% 
+   filter(price>=lower_price & price<=upper_price) %>%
+   filter(bed>=lower_bed & bed<=upper_bed)  %>%
+  filter(bath>=lower_bath & bath<=upper_bath) %>%
+  filter(house_size<=house_size_max  &  acre_lot<=acre_lot_max)
+
+summary(data)
+
+data1<-data %>%
+        mutate(street=as.character(street),
+               zip_code=as.character(zip_code)) %>%
+    dplyr::select(-prev_sold_date, -status)
+
+```
+
+```{r}
+# Ensure 'state' is a factor
+data1$state <- as.factor(data1$state)
+
+### EDA ###
+
+# Heatmap of price vs house_size with state on the y-axis
+library(ggplot2)
+ggplot(data1, aes(x = house_size, y = price)) +
+  geom_bin2d(bins = 30) +
+  labs(title = "Heatmap of House Price vs House Size",
+       x = "House Size (square feet)",
+       y = "House Price") +
+  theme_minimal() +
+  facet_wrap(~ state)
+
+
+# Scatter plot of price vs house_size, colored by state
+ggplot(data1, aes(x = house_size, y = price, color = state)) +
+  geom_point(alpha = 0.7) +
+  labs(title = "Scatter Plot of House Price vs House Size by State",
+       x = "House Size (square feet)",
+       y = "House Price") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+
+# Calculate average price and house_size by state
+state_summary <- data1 %>%
+  group_by(state) %>%
+  summarise(avg_price = mean(price, na.rm = TRUE),
+            avg_house_size = mean(house_size, na.rm = TRUE))
+
+# Bar chart for average house size by state
+ggplot(state_summary, aes(x = state, y = avg_house_size)) +
+  geom_bar(stat = "identity", fill = "lightblue", color = "black") +
+  labs(title = "Average House Size by State",
+       x = "State",
+       y = "Average House Size (square feet)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Bar chart for average house price by state
+ggplot(state_summary, aes(x = state, y = avg_price)) +
+  geom_bar(stat = "identity", fill = "lightblue", color = "black") +
+  labs(title = "Average House Price by State",
+       x = "State",
+       y = "Average House Price") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+### Inference ###
+
+# Fit the ANOVA model for house_size by state
+anova_house_size <- aov(house_size ~ state, data = data1)
+summary(anova_house_size)
+
+# Extract residuals and plot Q-Q plot for house_size ANOVA
+residuals_size <- residuals(anova_house_size)
+qqnorm(residuals_size)
+qqline(residuals_size)
+
+# Perform Tukey's HSD test for house_size ANOVA
+tukey_size <- TukeyHSD(anova_house_size)
+plot(tukey_size)
+
+# Linear regression of price on house_size with interaction by state
+linear_model <- lm(price ~ house_size * state, data = data1)
+summary(linear_model)
+
+# Extract residuals and plot Q-Q plot for linear model
+residuals_lm <- residuals(linear_model)
+qqnorm(residuals_lm)
+qqline(residuals_lm)
+```
+
+Interpreting the Results
+
+Degrees of Freedom (Df): For state, there are 50 levels, hence the Df is 50. 
+Sum Sq (Sum of Squares): The Sum Sq for state is 1.545e+10, and for residuals, it is 2.603e+11.
+Mean Sq (Mean Square): For state, it's 309065094, and for residuals, it's 520347.
+F value: The F value for state is 594, indicating a strong effect.
+Pr(>F): For state, the p-value is less than 2e-16, indicating that the effect of the state on house prices is statistically significant.
+
+(Intercept): The estimated price for the baseline category (state = baseline state) when house size is zero. The estimate is 2.285e+04 (significant with p-value < 0.001).
+
+house_size: Each square foot increase in house size is associated with an increase in house price by 122.5 units (significant with p-value < 0.001).
+
+State Coefficients: These coefficients represent the difference in house prices for each state compared to the baseline state. For example:
+
+stateCalifornia has a positive estimate (3.595e+05), indicating that, on average, house prices in California are significantly higher than in the baseline state.
+
+stateArkansas has a non-significant estimate (1.583e+03), indicating no significant difference in house prices compared to the baseline state.
+
+Interaction Terms: These coefficients represent the interaction between house size and state. For example:
+
+house_size:stateCalifornia has a negative estimate (-2.867e+01), indicating that the effect of house size on price is less in California compared to the baseline state.
+
+house_size:stateArizona has a positive estimate (4.048e+01), indicating that the effect of house size on price is more in Arizona compared to the baseline state.
+
+Residuals
+
+Residuals: The distribution of residuals (difference between observed and predicted values) should ideally be symmetric around zero. The residuals range from -1330957 to 605743, with a median close to zero.
+
+Conclusion
+
+There is a significant difference in house prices across different states when accounting for house size.
+
+The relationship between house size and house prices varies significantly by state. Some states show a stronger positive relationship, while others show a weaker or even negative relationship.
+
+The model explains a substantial portion of the variability in house prices (Multiple R-squared: 0.5527), indicating a moderately good fit.
+
+The F-statistic (6118) and its p-value (< 2.2e-16) suggest that the overall model is statistically significant.
+
+The significant interaction terms indicate that the effect of house size on price is not consistent across states.
+
+Some states have non-significant coefficients, indicating that house prices in these states are not significantly different from the baseline state.
+
+The residual standard error (113200) provides an idea of the typical deviation of observed prices from the model's predictions.
