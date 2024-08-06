@@ -1,0 +1,512 @@
+
+```{r}
+realtor_data <- read.csv("/Users/zhouwenxiao/Desktop/ANLY502/Project/data/realtor-data.csv")
+library(tidyverse)
+library(dplyr)
+library(multcomp)
+library(psych)
+
+sold<-realtor_data %>% subset(status=='sold')
+
+str(sold)
+summary(sold)
+```
+
+################## Data Wrangling ##################
+
+```{r}
+### Step 1: clean NA's
+na_counts <- sapply(sold, function(x) sum(is.na(x)))
+print(na_counts)
+#only keep records with all variables not missing
+sold1<-sold[complete.cases(sold),]
+
+### Step 2: Date: only keep month of date
+sold1$date <- substr(sold1$prev_sold_date, 6, 7)
+sold1<-sold1[,-1]
+
+# use Z-score to filter outliers
+#data <- sold1 %>% 
+#  filter(abs(scale(price)) < 3 & abs(scale(acre_lot)) < 3)
+
+### Step 3: use Quantiles to filter on outliers
+Cal_Q <- function(data, variable) {
+  q1 <- quantile(data[[variable]], 0.25)
+  q3 <- quantile(data[[variable]], 0.75)
+  iqr <- IQR(data[[variable]])
+  lower <- max(q1 - 0.5 * iqr, 0)
+  upper <- q3 + 0.5 * iqr
+  return(list(L = lower, U = upper))
+}
+price<-Cal_Q(sold1,'price')
+bed<-Cal_Q(sold1,'bed')
+bath<-Cal_Q(sold1,'bath')
+acre<-Cal_Q(sold1,'acre_lot')
+house<-Cal_Q(sold1,"house_size")
+#lower_bed<-1
+#upper_bed<-10
+#lower_bath<-1
+#upper_bath<-10
+#acre_lot_max<-10
+#house_size_max<-10000
+data <- sold1[
+  sold1$price >= price$L & sold1$price <= price$U &
+  sold1$bed >= bed$L & sold1$bed <= bed$U &
+  sold1$bath >= bath$L & sold1$bath <= bath$U &
+  sold1$house_size >= house$L & sold1$house_size <= house$U &
+  sold1$acre_lot >= acre$L & sold1$acre_lot <= acre$U,]
+
+### Step 4: Drop variables that are not useful in the study
+data1<-data %>%
+        mutate(street=as.character(street),
+               zip_code=as.character(zip_code)) %>%
+    dplyr::select(-prev_sold_date, -status)
+summary(data1)
+```
+
+
+
+################## EDA ##################
+### Part I: Zip Codes Variation
+```{r}
+# Sample 20 zip codes for visualization
+set.seed(12345)
+sample_zip_codes <- sample(unique(data1$zip_code), 30)
+# Filter data
+data_sample <- data1 %>%
+  filter(zip_code %in% sample_zip_codes)
+# Faceted plot continued
+ggplot(data_sample, aes(x = acre_lot, y = price)) + 
+  geom_point() + 
+  facet_wrap(~ zip_code) + 
+  labs(title = "Price vs Acre Lot by Sampled Zip Codes", 
+       x = "Acre Lot", 
+       y = "Price")
+```
+
+### Part 2: Histograms of Acre_lot and Price
+```{r}
+ggplot(data_sample, aes(x = acre_lot)) + 
+  geom_histogram() + 
+  labs(title = "Acre" , x = "Acre Lot", y = "Frequency")
+ggplot(data_sample, aes(x = price)) + 
+  geom_histogram() + 
+  labs(title = "Price", x = "Price", y = "Frequency")
+
+```
+
+### Part 3: Heatmap of price vs house_size with state on the y-axis
+```{r}
+datamap<-data1
+datamap$state<-as.factor(datamap$state)
+ggplot(datamap, aes(x = house_size, y = price)) +
+  geom_bin2d(bins = 30) +
+  labs(title = "Heatmap of House Price vs House Size",
+       x = "House Size (square feet)",
+       y = "House Price") +
+  theme_minimal() +
+  facet_wrap(~ state)
+
+# Scatter plot of price vs house_size, colored by state
+ggplot(datamap, aes(x = house_size, y = price, color = state)) +
+  geom_point(alpha = 0.7) +
+  labs(title = "Scatter Plot of House Price vs House Size by State",
+       x = "House Size (square feet)",
+       y = "House Price") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+
+# Calculate average price and house_size by state
+# Bar chart for average house size by state
+state_summary <- datamap %>%
+  group_by(state) %>%
+  summarise(avg_price = mean(price, na.rm = TRUE),
+            avg_house_size = mean(house_size, na.rm = TRUE))
+
+ggplot(state_summary, aes(x = state, y = avg_house_size)) +
+  geom_bar(stat = "identity", fill = "lightblue", color = "black") +
+  labs(title = "Average House Size by State",
+       x = "State",
+       y = "Average House Size (square feet)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Bar chart for average house price by state
+ggplot(state_summary, aes(x = state, y = avg_price)) +
+  geom_bar(stat = "identity", fill = "lightblue", color = "black") +
+  labs(title = "Average House Price by State",
+       x = "State",
+       y = "Average House Price") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+### Part 4: Correlation Plot for all variables
+```{r}
+library(corrplot)
+data2<-data1 %>%
+    mutate_if(is.character,as.factor) %>%
+    mutate_if(is.factor, as.numeric) 
+M <- cor(data2)
+M
+options(repr.plot.width =15, repr.plot.height = 7)
+M[lower.tri(M,diag=TRUE)] <- NA  #remove lower triangle values
+M[M == 1] <- NA
+
+M <- as.data.frame(as.table(M)) 
+M <- na.omit(M) 
+#M <- subset(M, abs(Freq) )   
+M <- M[order(-abs(M$Freq)),]        #sort by highest correlation
+
+mtx_corr <- reshape2::acast(M, Var1~Var2, value.var="Freq")  #turn M back into matrix in order to plot with corrplot
+corrplot(mtx_corr, is.corr=TRUE, tl.col="black", 
+         na.label=" ")
+title(main="Correlation Plot for House Price and Factors",line=0) 
+```
+
+
+
+
+
+################## Inference ##################
+Part I: Is there a significant difference in average house prices between properties with different numbers of bedrooms?
+```{r}
+ggplot(data1, aes(x = price)) +
+  geom_histogram(binwidth = 40000, fill = "lightblue", color = "black") +
+  labs(title = "Histogram of House Price", x = "Value", y = "Frequency") +
+  theme_minimal()
+data1$logprice<-log(data1$price)
+ggplot(data1, aes(x = logprice)) +
+  geom_histogram(binwidth = 1, fill = "lightblue", color = "black") +
+  labs(title = "Histogram of log House Price", x = "Value", y = "Frequency") +
+  theme_minimal()
+
+
+# Fit the ANOVA model
+data1$bed<-as.factor(data1$bed)
+anova_result <- aov(logprice ~ bed, data = data1)
+summary(anova_result)
+
+# Extract residuals
+residuals <- residuals(anova_result)
+
+# Plot Q-Q plot
+qqnorm(residuals)
+qqline(residuals)
+
+# Perform Tukey's HSD test
+library(multcomp)
+tukey_result <- TukeyHSD(anova_result)
+plot(tukey_result)
+# Find the most significant difference
+df<-tukey_result$bed
+signif<- df[which.min(df[, "p adj"]), ]
+signif_pos <- rownames(df)[which.min(df[, "p adj"])]
+print(signif_pos)
+```
+
+
+
+Part II: Two-sample t-test for Zip_code
+```{r}
+library(pwr)
+
+# Parameters for power analysis
+effect_size <- 0.5  # Medium effect size (Cohen's d)
+alpha <- 0.05       # Significance level
+power <- 0.8        # Desired power
+
+# Calculate required sample size for two-sample t-test
+sample_size <- pwr.t.test(d = effect_size, sig.level = alpha, power = power, type = "two.sample")$n
+
+# Since we have multiple zip codes, let's determine the sample size per zip code
+sample_size_per_zip <- ceiling(sample_size)
+cat("Minimum sample size per zip code:", sample_size_per_zip, "\n")
+##############################################################################
+
+
+# Example: Define a specific zip code to test
+zip_code_to_test <- "1129"
+# Ensure the zip code to test exists in the dataset
+if (!(zip_code_to_test %in% data1$zip_code)) {
+  stop(paste("Zip code", zip_code_to_test, "not found in the dataset"))
+}
+
+
+df_median <- data1 %>%
+  group_by(zip_code) %>%
+  summarize(mean_price = mean(price))
+
+# Step 2: Identify top 3 and bottom 3 zip codes
+top_bottom_zipcodes <- df_median %>%
+  arrange(desc(mean_price)) %>%
+  slice(c(1:100)) %>%
+  pull(zip_code)
+# Filter data to include only the specified zip code and others
+data_to_test <- data1 %>%
+  mutate(group = ifelse(zip_code %in% top_bottom_zipcodes, "Test", "Others"))
+
+# Verify that the group has exactly two levels
+unique_groups <- unique(data_to_test$group)
+if (length(unique_groups) != 2) {
+  stop("Grouping factor must have exactly 2 levels. Found levels: ", paste(unique_groups, collapse = ", "))
+}
+
+# Perform t-test
+t_test_result <- t.test(price ~ group, data = data_to_test)
+print(t_test_result)
+```
+
+```{r}
+set.seed(123)
+sampled_zip_codes <- sample(unique(data1$zip_code), 50) 
+data_anova <- data1 %>%
+  filter(zip_code %in% sampled_zip_codes)
+
+# Perform ANOVA
+anova_result <- aov(price ~ zip_code, data = data_anova)
+summary(anova_result)
+
+# Post-hoc test if ANOVA is significant
+if (summary(anova_result)[[1]][["Pr(>F)"]][1] < 0.05) {
+  TukeyHSD(anova_result)
+}
+
+# Plotting boxplots for visualization
+ggplot(data_anova, aes(x = zip_code, y = price)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Boxplot of Prices by Zip Code", x = "Zip Code", y = "Price")
+
+```
+The ANOVA results you provided indicate that there is a significant difference in the mean prices across the different zip codes sampled. Here's a detailed interpretation of the results:
+
+Interpretation of ANOVA Results
+Degrees of Freedom (Df):
+
+zip_code: 49 (number of zip codes - 1)
+Residuals: 1279 (total number of observations - number of groups)
+Sum of Squares (Sum Sq):
+
+zip_code: 2.323e+13 (explains the variation in price due to differences between zip codes)
+Residuals: 1.302e+13 (explains the variation in price within each zip code)
+Mean Squares (Mean Sq):
+
+zip_code: 4.741e+11 (Sum Sq divided by its respective Df)
+Residuals: 1.018e+10 (Sum Sq divided by its respective Df)
+F Value: 46.59
+
+The F value is the ratio of the mean square for zip codes to the mean square for residuals.
+p-Value: < 2e-16
+
+A very small p-value indicates that the observed differences in means are highly unlikely to have occurred by chance.
+Significance Codes:
+
+The p-value is extremely low (significance level denoted by ***), indicating strong evidence against the null hypothesis.
+Conclusion
+Since the p-value is much smaller than the common alpha level of 0.05, we reject the null hypothesis. This means that there are significant differences in the average prices across the different zip codes sampled.
+
+
+
+Since the ANOVA test shows a significant difference, it is useful to perform a post-hoc analysis to determine which specific zip codes differ from each other.
+
+
+Interpretation of the Tukey HSD Plot
+Confidence Intervals:
+
+Each horizontal line represents the confidence interval for the difference in mean prices between a pair of zip codes.
+If a confidence interval does not cross zero, it indicates a significant difference in mean prices between the two zip codes.
+Significance:
+
+Intervals that are entirely to the left or right of zero indicate a statistically significant difference in mean prices.
+Intervals that cross zero indicate that the difference in mean prices is not statistically significant.
+
+
+
+
+```{r}
+# Categorize acre_lot into bins
+data_clean <- data1 %>%
+  mutate(acre_bin = cut(acre_lot, breaks = quantile(acre_lot, probs = seq(0, 1, by = 0.2)), include.lowest = TRUE, labels = FALSE))
+
+# Ensure proper grouping
+data_clean <- data_clean %>%
+  mutate(acre_bin = factor(acre_bin))
+
+# Perform ANOVA
+anova_acre_result <- aov(price ~ acre_bin, data = data_clean)
+summary(anova_acre_result)
+
+# Post-hoc test if ANOVA is significant
+if (summary(anova_acre_result)[[1]][["Pr(>F)"]][1] < 0.05) {
+  print(TukeyHSD(anova_acre_result))
+}
+
+# Plotting boxplots for visualization
+ggplot(data_clean, aes(x = acre_bin, y = price)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Boxplot of Prices by Acre Lot Bins", x = "Acre Lot Bin", y = "Price")
+```
+
+
+
+Part III: Is house size different across states
+```{r}
+# Fit the ANOVA model for house_size by state
+anova_house_size <- aov(house_size ~ state, data = data1)
+summary(anova_house_size)
+
+# Extract residuals and plot Q-Q plot for house_size ANOVA
+residuals_size <- residuals(anova_house_size)
+qqnorm(residuals_size)
+qqline(residuals_size)
+
+# Perform Tukey's HSD test for house_size ANOVA
+tukey_size <- TukeyHSD(anova_house_size)
+plot(tukey_size)
+
+# Linear regression of price on house_size with interaction by state
+linear_model <- lm(price ~ house_size * state, data = data1)
+summary(linear_model)
+
+# Extract residuals and plot Q-Q plot for linear model
+residuals_lm <- residuals(linear_model)
+qqnorm(residuals_lm)
+qqline(residuals_lm)
+```
+Interpreting the Results
+
+Degrees of Freedom (Df): For state, there are 50 levels, hence the Df is 50. 
+Sum Sq (Sum of Squares): The Sum Sq for state is 1.545e+10, and for residuals, it is 2.603e+11.
+Mean Sq (Mean Square): For state, it's 309065094, and for residuals, it's 520347.
+F value: The F value for state is 594, indicating a strong effect.
+Pr(>F): For state, the p-value is less than 2e-16, indicating that the effect of the state on house prices is statistically significant.
+
+(Intercept): The estimated price for the baseline category (state = baseline state) when house size is zero. The estimate is 2.285e+04 (significant with p-value < 0.001).
+
+house_size: Each square foot increase in house size is associated with an increase in house price by 122.5 units (significant with p-value < 0.001).
+
+State Coefficients: These coefficients represent the difference in house prices for each state compared to the baseline state. For example:
+
+stateCalifornia has a positive estimate (3.595e+05), indicating that, on average, house prices in California are significantly higher than in the baseline state.
+
+stateArkansas has a non-significant estimate (1.583e+03), indicating no significant difference in house prices compared to the baseline state.
+
+Interaction Terms: These coefficients represent the interaction between house size and state. For example:
+
+house_size:stateCalifornia has a negative estimate (-2.867e+01), indicating that the effect of house size on price is less in California compared to the baseline state.
+
+house_size:stateArizona has a positive estimate (4.048e+01), indicating that the effect of house size on price is more in Arizona compared to the baseline state.
+
+Residuals
+
+Residuals: The distribution of residuals (difference between observed and predicted values) should ideally be symmetric around zero. The residuals range from -1330957 to 605743, with a median close to zero.
+
+Conclusion
+
+There is a significant difference in house prices across different states when accounting for house size.
+
+The relationship between house size and house prices varies significantly by state. Some states show a stronger positive relationship, while others show a weaker or even negative relationship.
+
+The model explains a substantial portion of the variability in house prices (Multiple R-squared: 0.5527), indicating a moderately good fit.
+
+The F-statistic (6118) and its p-value (< 2.2e-16) suggest that the overall model is statistically significant.
+
+The significant interaction terms indicate that the effect of house size on price is not consistent across states.
+
+Some states have non-significant coefficients, indicating that house prices in these states are not significantly different from the baseline state.
+
+The residual standard error (113200) provides an idea of the typical deviation of observed prices from the model's predictions.
+
+
+
+
+
+
+######################## Multiple Linear Regression Model ##############################
+```{r}
+library(caret)
+library(car)
+datamod<-data1 %>%
+        dplyr::select(-city,-logprice,-street)
+datamod$bed<-as.numeric(data1$bed)
+datamod$date<-as.numeric(data1$date)
+datamod$zip_code<-as.numeric(data1$zip_code)
+
+datamod1<-datamod %>% dplyr::select(-state)
+cor_matrix <- cor(datamod1 %>% dplyr::select(-price))
+# Plot correlation matrix
+corrplot(cor_matrix, method = "circle")
+# Identify highly correlated features (threshold = 0.9)
+highly_correlated <- findCorrelation(cor_matrix, cutoff = 0.9)
+# Remove highly correlated features
+datamod1 <- datamod1 %>% dplyr::select(-all_of(highly_correlated))
+
+
+
+# Define the control using a linear model selection function
+control <- rfeControl(functions = lmFuncs, method = "cv", number = 10)
+# Define the response and predictors
+response <- datamod1$price
+predictors <- datamod1 %>% dplyr::select(-price)
+set.seed(123)
+results <- rfe(predictors, response, sizes = c(1:ncol(predictors)), rfeControl = control)
+# Print the results
+print(results)
+print(predictors(results))
+
+# Plot the results
+plot(results, type = c("g", "o"))
+```
+
+
+```{r}
+# Get the selected features
+selected_features <- predictors(results)
+selected_features  <- selected_features [selected_features  != 'zip_code']
+print(selected_features)
+
+
+datamod<-datamod[,c("price",selected_features,"state")]
+str(datamod)
+
+# Split the data into training and testing sets
+set.seed(123)
+trainIndex <- createDataPartition(datamod$price, p = 0.8, list = FALSE, times = 1)
+train <- datamod[trainIndex,]
+test <- datamod[-trainIndex,]
+
+
+model1<-lm(log(price)~.,data=train) 
+summary(model1)
+Anova(model1,type=3)
+
+### Prediction ###
+# Predict on the test set
+predictions <- predict(model1, test[, c(selected_features,"state")])
+# Compare the predicted values with actual values
+comparison <- data.frame(Actual = test$price, Predicted = predictions)
+
+# Calculate performance metrics
+mse <- mean((comparison$Actual - comparison$Predicted)^2)
+rmse <- sqrt(mse)
+rsquared <- summary(model1)$r.squared
+
+# Print performance metrics
+cat("Mean Squared Error (MSE):", mse, "\n")
+cat("Root Mean Squared Error (RMSE):", rmse, "\n")
+cat("R-squared:", rsquared, "\n")
+```
+
+
+```{r}
+##diagnostics
+qqnorm(model1$residuals)
+
+plot(model1$fitted.values,model1$residuals,main="Fitted value vs Residuals",
+     xlab = "Fitted value",ylab="Residuals")
+#exist non-normality and heteroscedasticity
+```
+
